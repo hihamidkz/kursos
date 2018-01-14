@@ -22,21 +22,21 @@ int main(int argc, char **argv)
 {
 	struct board gameboard;
 	bzero(gameboard.cells, 9 * sizeof(int));
-	
+
 	gameboard.x = 1;
 	gameboard.y = 1;
 	gameboard.w = 51;
 	gameboard.h = 26;
-	
+
 	printBoard(gameboard);
-		
+
 	int sockfd, numbytes;
-	
+
 	struct sockaddr_in their_addr; // Адрес сервера
 	struct in_addr addr; // IP-адрес сервера
 	char *cp; // IP-адрес в точечной нотации
 	int port; // Номер порта
-	
+
 	if (argc < 2) {
 		cp = "127.0.0.1";
 		port = 7777;
@@ -75,17 +75,17 @@ int main(int argc, char **argv)
 		fprintf(stderr, "Too many arguments.\n");
 		exit(EXIT_FAILURE);
 	}
-	
+
 	if (inet_aton(cp, &addr) == 0) {
 		perror("inet_aton");
 		exit(EXIT_FAILURE);
 	}
-	
+
 	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
 		perror("socket");
 		exit(1);
 	}
-	
+
 	their_addr.sin_family = AF_INET;
 	their_addr.sin_port = htons(port);
 	their_addr.sin_addr = addr;
@@ -138,6 +138,8 @@ int main(int argc, char **argv)
 	int save_game = -1;
 	int tmp;
 	
+	int rows, cols;
+	mt_getscreensize(&rows, &cols);
 	rk_mytermsave();
 	while (1) {
 		if (chat_mode == 1) {
@@ -190,6 +192,7 @@ int main(int argc, char **argv)
 					exit(EXIT_FAILURE);
 				}
 				if (msg_type == DATA) {
+					pos[0] = pos[1] = 0;
 					recv(sockfd, pos, 2 * sizeof(int), 0);
 					setBoardPos(&gameboard, pos[0], pos[1], val);
 					my_move = -my_move;
@@ -248,6 +251,11 @@ int main(int argc, char **argv)
 			continue;
 		} else if (k == ESC) {
 			save_game = 1;
+		}
+		if (line >= rows - 2) {
+			line = 29;
+			printBoard(gameboard);
+			mt_gotoXY(line, 1);
 		}
 	}
 

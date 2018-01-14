@@ -2,7 +2,7 @@ CC := gcc
 OBJ := ./obj
 
 .PHONY: all
-all: main server client temp
+all: server client
 
 temp: temp.o obj/myreadkey.o obj/myterm.o
 	$(CC) -o $@ $^

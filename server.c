@@ -83,7 +83,7 @@ int main(int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 	
-	fcntl(sockfd, F_SETFL, O_NONBLOCK);
+	//fcntl(sockfd, F_SETFL, O_NONBLOCK);
 	
 	my_addr.sin_family = AF_INET;
 	my_addr.sin_port = htons(port_number);
@@ -94,7 +94,7 @@ int main(int argc, char **argv)
 		perror("bind");
 		exit(1);
 	}
-
+	
 	if (listen(sockfd, BACKLOG) == -1) {
 		perror("listen");
 		exit(1);
@@ -143,7 +143,7 @@ int main(int argc, char **argv)
 				perror("accept");
 				exit(EXIT_FAILURE);
 			}
-			fcntl(new_fd[clients_count], F_SETFL, O_NONBLOCK);
+			//fcntl(new_fd[clients_count], F_SETFL, O_NONBLOCK);
 			
 			clients_count++;
 		}
@@ -258,9 +258,6 @@ int main(int argc, char **argv)
 			}
 		}
 	}
-	
-	//if (exit_game == 1)
-		//save_game(gameboard, turn);
 	
 	close(new_fd[0]);
 	close(new_fd[1]);
