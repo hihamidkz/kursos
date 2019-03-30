@@ -1,4 +1,3 @@
 obj/
-savegames/
-sockets/
-temp.c
+./client
+./server
