@@ -16,54 +16,76 @@
 
 #include "interface.h"
 
+#define TIMEOUT 60000
+#define MSG_LEN 100
 #define BACKLOG 10
 #define MESSAGE 1
 #define DATA 2
 #define EXIT 3
 
-int main(int argc, char **argv)
+int clients_connect(int sockfd, int *new_fd)
 {
-	int count, port_number;
+	int clients_count = 0;
+	char message[MSG_LEN];
+	struct sockaddr_in their_addr[2];
 	
-	if (argc < 2) {
-		count = 1;
-		port_number = 7777;
-	} else if (argc < 4) {
-		if (strcmp(argv[1], "--count-games") == 0 || strcmp(argv[1], "-g") == 0) {
-			count = atoi(argv[2]);
-			port_number = 7777;
-		} else if (strcmp(argv[1], "--port-number") == 0 || strcmp(argv[1], "-n") == 0) {
-			count = 1;
-			port_number = atoi(argv[2]);
-		} else {
-			fprintf(stderr, "Unknown argument.\n");
-			exit(EXIT_FAILURE);
-		}
-	} else if (argc < 6) {
-		if (strcmp(argv[1], "--count-games") == 0 || strcmp(argv[1], "-g") == 0)
-			count = atoi(argv[2]);
-		else if (strcmp(argv[1], "--port-number") == 0 || strcmp(argv[1], "-n") == 0)
-			port_number = atoi(argv[2]);
-		else {
-			fprintf(stderr, "Unknown argument.\n");
-			exit(EXIT_FAILURE);
+	while (clients_count < 2) {
+		struct pollfd pfd;
+		pfd.fd = sockfd;
+		pfd.events = POLLIN;
+		
+		int poll_rez = poll(&pfd, 1, TIMEOUT);
+		if (poll_rez < 0) {
+			perror("poll");
+			return -1;
+		} else if (poll_rez == 0) {
+			if (clients_count == 0)
+				printf("Time limit exceeded. Clients not found.\n");
+			else {
+				sprintf(message, "Time limit exceeded. The second client is not found.");
+				send(new_fd[0], message, strlen(message), 0);
+				printf("Time limit exceeded. The second client is not found.\n");
+			}
+			return -1;
 		}
 		
-		if (strcmp(argv[3], "--count-games") == 0 || strcmp(argv[3], "-g") == 0)
-			count = atoi(argv[4]);
-		else if (strcmp(argv[3], "--port-number") == 0 || strcmp(argv[3], "-n") == 0)
-			port_number = atoi(argv[4]);
-		else {
-			fprintf(stderr, "Unknown argument.\n");
-			exit(EXIT_FAILURE);
+		socklen_t sin_size = sizeof(struct sockaddr_in);
+		if ((new_fd[clients_count] = accept(sockfd, (struct sockaddr *)&their_addr[clients_count], &sin_size)) == -1) {
+			perror("accept");
+			return -1;
 		}
-	} else {
-		fprintf(stderr, "Too many arguments.\n");
-		exit(EXIT_FAILURE);
+			
+		clients_count++;
+
+		if (clients_count == 1) {
+			sprintf(message, "Hello %s.", inet_ntoa(their_addr[clients_count - 1].sin_addr));
+			send(new_fd[clients_count - 1], message, strlen(message), 0);
+			continue;
+		}
+		sprintf(message, "Hello. You are number two. The first client is %s", inet_ntoa(their_addr[clients_count - 1].sin_addr));
+		send(new_fd[clients_count - 1], message, strlen(message), 0);
+		sprintf(message, "Client number two is %s\nYour turn is first.", inet_ntoa(their_addr[clients_count - 1].sin_addr));
+		send(new_fd[clients_count - 2], message, strlen(message), 0);
 	}
 	
-	int i;
-	int pid;
+	return 0;
+}
+
+int main(int argc, char **argv)
+{
+	int count = 1;
+	int port_number = 7777;
+	
+	for (int i = 1; i < argc; i += 2) {
+		if (strcmp(argv[i], "--count-games") == 0 || strcmp(argv[i], "-g") == 0) {
+			count = atoi(argv[i + 1]);
+		} else if (strcmp(argv[i], "--port-number") == 0 || strcmp(argv[i], "-n") == 0) {
+			port_number = atoi(argv[i + 1]);
+		} else {
+			fprintf(stderr, "Unknown argument '%s'\n", argv[i]);
+			exit(EXIT_SUCCESS);
+		}
+	}
 	
 	int sockfd, new_fd[2] = {0, 0};
 	
@@ -72,18 +94,13 @@ int main(int argc, char **argv)
 		exit(EXIT_FAILURE);
 	}
 	
-	struct sockaddr_in my_addr; // Адрес текущего хоста (сервера)
-	struct sockaddr_in their_addr[2]; // Адрес подключившегося хоста (клиента)
-	socklen_t sin_size;
-	struct sigaction sa;
+	struct sockaddr_in my_addr;
 	int yes = 1;
 	
 	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
 		perror("setsockopt");
-		exit(EXIT_FAILURE);
+		exit(1);
 	}
-	
-	//fcntl(sockfd, F_SETFL, O_NONBLOCK);
 	
 	my_addr.sin_family = AF_INET;
 	my_addr.sin_port = htons(port_number);
@@ -100,65 +117,11 @@ int main(int argc, char **argv)
 		exit(1);
 	}
 	
-	for (i = 0; i < count - 1; i++)
-		pid = fork();
-	
-	int clients_count = 0;
-	char message[100];
-	int contin = -1; // Continue saved game?
-	
-	srand(pid);
-	if (pid > 0)
-		sleep(5 + rand() % 5);
-	
-	while (clients_count < 2) {
-		fd_set readset;
-		FD_ZERO(&readset);
-		FD_SET(sockfd, &readset);
-		FD_SET(new_fd[0], &readset);
-		FD_SET(new_fd[1], &readset);
-		
-		struct timeval timeout;
-		timeout.tv_sec = 60;
-		timeout.tv_usec = 0;
-		
-		int max_elem = fmax(new_fd[0], new_fd[1]);
-		int mx = fmax(sockfd, max_elem);
-		
-		if (select(mx + 1, &readset, NULL, NULL, &timeout) <= 0) {
-			//perror("select");
-			if (clients_count == 0)
-				printf("Time limit exceeded. Clients not found.\n");
-			else {
-				sprintf(message, "Time limit exceeded. The second client not found.");
-				send(new_fd[0], message, strlen(message), 0);
-				printf("Time limit exceeded. The second client not found.\n");
-			}
-			exit(EXIT_FAILURE);
-		}
-		
-		if (FD_ISSET(sockfd, &readset)) {
-			sin_size = sizeof(struct sockaddr_in);
-			if ((new_fd[clients_count] = accept(sockfd, (struct sockaddr *)&their_addr[clients_count], &sin_size)) == -1) {
-				perror("accept");
-				exit(EXIT_FAILURE);
-			}
-			//fcntl(new_fd[clients_count], F_SETFL, O_NONBLOCK);
-			
-			clients_count++;
-		}
-		if (clients_count == 1) {
-			sprintf(message, "Hello %s.", inet_ntoa(their_addr[clients_count - 1].sin_addr));
-			send(new_fd[clients_count - 1], message, strlen(message), 0);
-			//recv(new_fd[clients_count - 1]
-			continue;
-		}
-		sprintf(message, "Hello. You are number two. The first client is %s", inet_ntoa(their_addr[clients_count - 1].sin_addr));
-		send(new_fd[clients_count - 1], message, strlen(message), 0);
-		sprintf(message, "Client number two is %s\nYour turn is first.", inet_ntoa(their_addr[clients_count - 1].sin_addr));
-		send(new_fd[clients_count - 2], message, strlen(message), 0);
+	if (clients_connect(sockfd, new_fd) < 0) {
+		exit(1);
 	}
 	
+	char message[MSG_LEN];
 	struct pollfd pfd[2];
 	
 	pfd[0].fd = new_fd[0];
@@ -172,9 +135,9 @@ int main(int argc, char **argv)
 	int win = -1;
 	int niters = 0;
 	
-	int turn = 0; // Who's move
+	int turn = 0;
 	int msg_type = 1;
-	int exit_game = -1; // To save or not to save?
+	int exit_game = -1;
 	
 	while (win == -1) {
 		if (poll(&pfd[turn], 1, 60) > 0) {
@@ -263,8 +226,6 @@ int main(int argc, char **argv)
 	close(new_fd[1]);
 	close(sockfd);
 	
-	for (i = 0; i < count - 1; i++)
-		wait(NULL);
 	return 0;
 }
 
