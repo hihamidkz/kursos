@@ -1,28 +1,18 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <errno.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <sys/time.h>
-#include <math.h>
-#include <sys/wait.h>
-#include <signal.h>
-#include <fcntl.h>
 #include <poll.h>
+#include <arpa/inet.h>
 
 #include "interface.h"
+#include "server.h"
 
-#define TIMEOUT 60000
 #define MSG_LEN 100
-#define BACKLOG 10
-#define MESSAGE 1
-#define DATA 2
-#define EXIT 3
+#define TIMEOUT 60000
+#define DEAD_HEAT 4
 
+/**
+  * Ждем подключения клиентов
+***/
 int clients_connect(int sockfd, int *new_fd)
 {
 	int clients_count = 0;
@@ -71,165 +61,92 @@ int clients_connect(int sockfd, int *new_fd)
 	return 0;
 }
 
-int main(int argc, char **argv)
+/**
+  * Проверяем, не произошла ли победа, если да
+  * отправляем сообщения клиентам
+***/
+int win_verification(int player, int fd1, int fd2, struct board gameboard)
 {
-	int count = 1;
-	int port_number = 7777;
-	
-	for (int i = 1; i < argc; i += 2) {
-		if (strcmp(argv[i], "--count-games") == 0 || strcmp(argv[i], "-g") == 0) {
-			count = atoi(argv[i + 1]);
-		} else if (strcmp(argv[i], "--port-number") == 0 || strcmp(argv[i], "-n") == 0) {
-			port_number = atoi(argv[i + 1]);
-		} else {
-			fprintf(stderr, "Unknown argument '%s'\n", argv[i]);
-			exit(EXIT_SUCCESS);
-		}
-	}
-	
-	int sockfd, new_fd[2] = {0, 0};
-	
-	if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
-		perror("socket");
-		exit(EXIT_FAILURE);
-	}
-	
-	struct sockaddr_in my_addr;
-	int yes = 1;
-	
-	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
-		perror("setsockopt");
-		exit(1);
-	}
-	
-	my_addr.sin_family = AF_INET;
-	my_addr.sin_port = htons(port_number);
-	my_addr.sin_addr.s_addr = INADDR_ANY;
-	memset(&(my_addr.sin_zero), 0, 8);
-
-	if (bind(sockfd, (struct sockaddr *)&my_addr, sizeof(struct sockaddr)) == -1) {
-		perror("bind");
-		exit(1);
-	}
-	
-	if (listen(sockfd, BACKLOG) == -1) {
-		perror("listen");
-		exit(1);
-	}
-	
-	if (clients_connect(sockfd, new_fd) < 0) {
-		exit(1);
-	}
-	
+	int win = check_win(gameboard);
 	char message[MSG_LEN];
-	struct pollfd pfd[2];
-	
-	pfd[0].fd = new_fd[0];
-	pfd[1].fd = new_fd[1];
-	pfd[0].events = pfd[1].events = POLLIN | POLLHUP | POLLRDNORM;
-	
-	struct board gameboard;
-	bzero(gameboard.cells, 9 * sizeof(int));
-	
-	int pos[2];
-	int win = -1;
-	int niters = 0;
-	
-	int turn = 0;
-	int msg_type = 1;
-	int exit_game = -1;
-	
-	while (win == -1) {
-		if (poll(&pfd[turn], 1, 60) > 0) {
-			if (recv(new_fd[turn], &msg_type, sizeof(int), 0) == 0) {
-				send(new_fd[turn ^ 1], NULL, 0, 0);
-				printf("Client number %d severed connection.\n", turn);
-				exit(EXIT_FAILURE);
-			}
 			
-			if (msg_type == DATA) {
-				if (exit_game < 0) {
-					send(new_fd[turn ^ 1], &msg_type, sizeof(int), 0);
-					recv(new_fd[turn], pos, 2 * sizeof(int), 0);
-					send(new_fd[turn ^ 1], pos, 2 * sizeof(int), 0);
-					recv(new_fd[turn], &gameboard, sizeof(gameboard), 0);
-					niters++;
-					turn ^= 1;
-				} else {
-					recv(new_fd[turn], pos, 2 * sizeof(int), 0);
-					msg_type = EXIT;
-					recv(new_fd[turn], &gameboard, sizeof(gameboard), 0);
-					send(new_fd[turn], &msg_type, sizeof(int), 0);
-					break;
-				}
-			} else if (msg_type == MESSAGE) {
-				bzero(message, 100);
-				send(new_fd[turn ^ 1], &msg_type, sizeof(int), 0);
-				recv(new_fd[turn], message, 100, 0);
-				send(new_fd[turn ^ 1], message, 100, 0);
-			} else {
-				send(new_fd[turn ^ 1], &msg_type, sizeof(int), 0);
-				//recv(new_fd[turn], &exit_game, sizeof(int), 0);
-				break;
-			}
-			
-			if ((win = check_win(gameboard)) > 0) {
-				
-				msg_type = DATA;
-				
-				send(new_fd[0], &msg_type, sizeof(int), 0);
-				send(new_fd[1], &msg_type, sizeof(int), 0);
-				
-				send(new_fd[0], &win, sizeof(int), 0);
-				send(new_fd[1], &win, sizeof(int), 0);
-				if (win == 1) {
-					sprintf(message, "You are winner!");
-					send(new_fd[0], message, strlen(message), 0);
-					sprintf(message, "You are loser.");
-					send(new_fd[1], message, strlen(message), 0);
-					break;
-				} else if (win == 2) {
-					sprintf(message, "You are winner!");
-					send(new_fd[1], message, strlen(message), 0);
-					sprintf(message, "You are loser.");
-					send(new_fd[0], message, strlen(message), 0);
-					break;
-				}
-			} else if (niters == 9) {
-				win = 3;
-				msg_type = 2;
-				
-				send(new_fd[0], &msg_type, sizeof(int), 0);
-				send(new_fd[1], &msg_type, sizeof(int), 0);
-				send(new_fd[0], &win, sizeof(int), 0);
-				send(new_fd[1], &win, sizeof(int), 0);
-				sprintf(message, "Dead heat!");
-				send(new_fd[0], message, strlen(message), 0);
-				send(new_fd[1], message, strlen(message), 0);
-				break;
-			}
-		} else if (poll(&pfd[turn ^ 1], 1, 60) > 0 && exit_game < 0) {
-			recv(new_fd[turn ^ 1], &msg_type, sizeof(int), 0);
-			if (msg_type == MESSAGE) {
-				bzero(message, 100);
-				send(new_fd[turn], &msg_type, sizeof(int), 0);
-				recv(new_fd[turn ^ 1], message, 100, 0);
-				send(new_fd[turn], message, strlen(message), 0);
-			} else {
-				//recv(new_fd[turn ^ 1], &exit_game, sizeof(int), 0);
-				continue;
-			}
+	if (win > 0) {
+		int msg_type = DATA;
+		send(fd1, &msg_type, sizeof(int), 0);
+		send(fd1, &win, sizeof(int), 0);
+		send(fd2, &msg_type, sizeof(int), 0);
+		send(fd2, &win, sizeof(int), 0);
+
+		if (win == DEAD_HEAT) {
+			sprintf(message, "Dead heat!");
+			send(fd1, message, strlen(message), 0);
+			send(fd2, message, strlen(message), 0);
+		} else if (win == player) {
+			sprintf(message, "You are winner!");
+			send(fd1, message, strlen(message), 0);
+			sprintf(message, "You are loser.");
+			send(fd2, message, strlen(message), 0);
+		} else {
+			sprintf(message, "You are loser.");
+			send(fd1, message, strlen(message), 0);
+			sprintf(message, "You are winner!");
+			send(fd2, message, strlen(message), 0);
 		}
+		
+		return 1;
 	}
-	
-	close(new_fd[0]);
-	close(new_fd[1]);
-	close(sockfd);
 	
 	return 0;
 }
 
+void *thread_func(void *arg)
+{
+	struct thread_data *data = (struct thread_data*)arg;
+	struct board *gameboard = data->gameboard;
+	struct pollfd pfd;
+	pfd.fd = data->fd1;
+	pfd.events = POLLIN;
+	
+	int numbytes;
+	int msg_type;
+	int pos[2];
+	char message[MSG_LEN];
+	
+	while (1) {
+		int poll_rez = poll(&pfd, 1, TIMEOUT);
+		if (poll_rez > 0) {
+			if (recv(data->fd1, &msg_type, sizeof(int), 0) == 0) {
+				if (check_win(*gameboard) > 0) {
+					break;
+				}
+				msg_type = EXIT;
+				send(data->fd2, &msg_type, sizeof(int), 0);
+				break;
+			}
 
-
-
+			switch (msg_type) {
+			case DATA:
+				send(data->fd2, &msg_type, sizeof(int), 0) < 0;
+				recv(data->fd1, pos, 2 * sizeof(int), 0);
+				
+				send(data->fd2, pos, 2 * sizeof(int), 0);
+				recv(data->fd1, gameboard, sizeof(*gameboard), 0);
+				break;
+			case MESSAGE:
+				bzero(message, MSG_LEN);
+				send(data->fd2, &msg_type, sizeof(int), 0);
+				recv(data->fd1, message, MSG_LEN, 0);
+				send(data->fd2, message, MSG_LEN, 0);
+				break;
+			case EXIT:
+				send(data->fd2, &msg_type, sizeof(int), 0);
+				break;
+			}
+			
+			if (win_verification(data->player, data->fd1, data->fd2, *gameboard)) {
+				break;
+			}
+		}
+	}
+}
 
